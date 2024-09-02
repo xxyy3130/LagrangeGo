@@ -4,10 +4,16 @@ package client
 
 import (
 	"errors"
+	"net/http"
+	"net/http/cookiejar"
 	"net/netip"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"golang.org/x/net/publicsuffix"
+
+	"github.com/LagrangeDev/LagrangeGo/utils/log"
 
 	"github.com/RomiChan/syncx"
 
@@ -25,6 +31,7 @@ import (
 
 // NewClient 创建一个新的 QQ Client
 func NewClient(uin uint32, appInfo *auth.AppInfo, signUrl ...string) *QQClient {
+	cookieContainer, _ := cookiejar.New(&cookiejar.Options{PublicSuffixList: publicsuffix.List})
 	client := &QQClient{
 		Uin:  uin,
 		oicq: oicq.NewCodec(int64(uin)),
@@ -32,11 +39,15 @@ func NewClient(uin uint32, appInfo *auth.AppInfo, signUrl ...string) *QQClient {
 			AppID:    uint32(appInfo.AppID),
 			SubAppID: uint32(appInfo.SubAppID),
 		},
+		ticket: &TicketService{
+			client: &http.Client{Jar: cookieContainer},
+			sKey:   &keyInfo{},
+		},
 		alive: true,
 		UA:    "LagrangeGo qq/" + appInfo.PackageSign,
 	}
-	client.signProvider = sign.NewProviderURL(func(msg string) {
-		client.debugln(msg)
+	client.signProvider = sign.NewSignClient(appInfo, func(s string) {
+		client.debug(s)
 	}, signUrl...)
 	client.transport.Version = appInfo
 	client.transport.Sig.D2Key = make([]byte, 0, 16)
@@ -49,7 +60,7 @@ func NewClient(uin uint32, appInfo *auth.AppInfo, signUrl ...string) *QQClient {
 
 type QQClient struct {
 	Uin          uint32
-	signProvider []sign.Provider
+	signProvider sign.Provider
 
 	stat Statistics
 	once sync.Once
@@ -65,8 +76,9 @@ type QQClient struct {
 	ConnectTime    time.Time
 	transport      network.Transport
 	oicq           *oicq.Codec
-	logger         Logger
+	logger         log.Logger
 	highwaySession highway.Session
+	ticket         *TicketService
 
 	// internal state
 	handlers        syncx.Map[uint32, *handlerInfo]
@@ -148,7 +160,10 @@ func (c *QQClient) sendOidbPacketAndWait(pkt *oidb.OidbPacket) ([]byte, error) {
 }
 
 func (c *QQClient) sendUniPacketAndWait(cmd string, buf []byte) ([]byte, error) {
-	seq, packet := c.uniPacket(cmd, buf)
+	seq, packet, err := c.uniPacket(cmd, buf)
+	if err != nil {
+		return nil, err
+	}
 	pkt, err := c.sendAndWait(seq, packet)
 	if err != nil {
 		return nil, err

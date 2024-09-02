@@ -208,12 +208,14 @@ func parseMessageElements(msg []*message.Elem) []IMessageElement {
 		if elem.VideoFile != nil {
 			return []IMessageElement{
 				&ShortVideoElement{
-					Name:      elem.VideoFile.FileName,
-					Uuid:      utils.S2B(elem.VideoFile.FileUuid),
-					Size:      elem.VideoFile.FileSize,
-					ThumbSize: elem.VideoFile.ThumbFileSize,
-					Md5:       elem.VideoFile.FileMd5,
-					ThumbMd5:  elem.VideoFile.ThumbFileMd5,
+					Name: elem.VideoFile.FileName,
+					Uuid: utils.S2B(elem.VideoFile.FileUuid),
+					Size: uint32(elem.VideoFile.FileSize),
+					Md5:  elem.VideoFile.FileMd5,
+					Thumb: &VideoThumb{
+						Size: uint32(elem.VideoFile.ThumbFileSize),
+						Md5:  elem.VideoFile.ThumbFileMd5,
+					},
 				},
 			}
 		}
@@ -452,9 +454,25 @@ func (msg *SendingMessage) FirstOrNil(f func(element IMessageElement) bool) IMes
 	return nil
 }
 
+func ElementsHasType(elems []IMessageElement, t ElementType) bool {
+	for _, elem := range elems {
+		if elem.Type() == t {
+			return true
+		}
+	}
+	return false
+}
+
 func PackElementsToBody(msgElems []IMessageElement) (msgBody *message.MessageBody) {
 	msgBody = &message.MessageBody{
 		RichText: &message.RichText{Elems: PackElements(msgElems)},
+	}
+	for _, elem := range msgElems {
+		bd, ok := elem.(MsgContentBuilder)
+		if !ok {
+			continue
+		}
+		msgBody.MsgContent = bd.BuildContent()
 	}
 	return
 }

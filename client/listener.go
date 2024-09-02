@@ -170,6 +170,7 @@ func decodeOlPushServicePacket(c *QQClient, pkt *network.Packet) (any, error) {
 			for _, request := range requests {
 				if request.TargetUid == c.GetUid(c.Uin) && !request.Checked() {
 					ev.RequestSeq = request.Sequence
+					break
 				}
 			}
 		}
@@ -336,6 +337,12 @@ func (c *QQClient) PreprocessGroupMessageEvent(msg *msgConverter.GroupMessage) e
 		case *msgConverter.VoiceElement:
 			url, _ := c.GetGroupRecordUrl(msg.GroupUin, e.Node)
 			e.Url = url
+		case *msgConverter.ShortVideoElement:
+			url, err := c.GetVideoUrl(true, e)
+			if err != nil {
+				return err
+			}
+			e.Url = url
 		case *msgConverter.FileElement:
 			url, _ := c.GetGroupFileUrl(msg.GroupUin, e.FileId)
 			e.FileUrl = url
@@ -358,6 +365,12 @@ func (c *QQClient) PreprocessPrivateMessageEvent(msg *msgConverter.PrivateMessag
 			e.Url = url
 		case *msgConverter.VoiceElement:
 			url, err := c.GetPrivateRecordUrl(e.Node)
+			if err != nil {
+				return err
+			}
+			e.Url = url
+		case *msgConverter.ShortVideoElement:
+			url, err := c.GetVideoUrl(false, e)
 			if err != nil {
 				return err
 			}

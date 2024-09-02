@@ -3,6 +3,8 @@ package client
 import (
 	"errors"
 
+	"github.com/LagrangeDev/LagrangeGo/utils/crypto"
+
 	"github.com/LagrangeDev/LagrangeGo/client/packets/pb/service/oidb"
 
 	"github.com/LagrangeDev/LagrangeGo/client/packets/pb/message"
@@ -10,6 +12,7 @@ import (
 
 	"github.com/LagrangeDev/LagrangeGo/client/entity"
 	oidb2 "github.com/LagrangeDev/LagrangeGo/client/packets/oidb"
+	message2 "github.com/LagrangeDev/LagrangeGo/message"
 )
 
 // FetchFriends 获取好友列表信息，使用token可以获取下一页的群成员信息
@@ -338,6 +341,18 @@ func (c *QQClient) GetGroupRecordUrl(groupUin uint32, node *oidb.IndexNode) (str
 	return oidb2.ParseGroupRecordDownloadResp(resp)
 }
 
+func (c *QQClient) GetVideoUrl(isGroup bool, video *message2.ShortVideoElement) (string, error) {
+	pkt, err := oidb2.BuildVideoDownloadReq(c.Sig().Uid, string(video.Uuid), video.Name, isGroup, video.Md5, video.Sha1)
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.sendOidbPacketAndWait(pkt)
+	if err != nil {
+		return "", err
+	}
+	return oidb2.ParseVideoDownloadResp(resp)
+}
+
 func (c *QQClient) GetGroupFileUrl(groupUin uint32, fileID string) (string, error) {
 	pkt, err := oidb2.BuildGroupFSDownloadReq(groupUin, fileID)
 	if err != nil {
@@ -425,4 +440,240 @@ func (c *QQClient) SetFriendRequest(accept bool, targetUid string) error {
 		return err
 	}
 	return oidb2.ParseSetFriendRequestResp(resp)
+}
+
+// FetchClientKey 获取ClientKey
+func (c *QQClient) FetchClientKey() (string, error) {
+	pkt, err := oidb2.BuildFetchClientKeyReq()
+	if err != nil {
+		return "", err
+	}
+	resp, err := c.sendOidbPacketAndWait(pkt)
+	if err != nil {
+		return "", err
+	}
+	return oidb2.ParseFetchClientKeyResp(resp)
+}
+
+// FetchCookies 获取cooikes
+func (c *QQClient) FetchCookies(domains []string) ([]string, error) {
+	pkt, err := oidb2.BuildFetchCookieReq(domains)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.sendOidbPacketAndWait(pkt)
+	if err != nil {
+		return nil, err
+	}
+	return oidb2.ParseFetchCookieResp(resp)
+}
+
+// UploadPrivateFile 上传私聊文件
+func (c *QQClient) UploadPrivateFile(targetUin uint32, localFilePath string) error {
+	fileElement, err := message2.NewLocalFile(localFilePath)
+	if err != nil {
+		return err
+	}
+	uploadedFileElement, err := c.FileUploadPrivate(c.GetUid(targetUin), fileElement)
+	if err != nil {
+		return err
+	}
+	route := &message.RoutingHead{
+		Trans0X211: &message.Trans0X211{
+			CcCmd: proto.Uint32(4),
+			Uid:   proto.String(c.GetUid(targetUin)),
+		},
+	}
+	body := message2.PackElementsToBody([]message2.IMessageElement{uploadedFileElement})
+	mr := crypto.RandU32()
+	ret, err := c.SendRawMessage(route, body, mr)
+	if err != nil || ret.PrivateSequence == 0 {
+		return err
+	}
+	return nil
+}
+
+// UploadGroupFile 上传群文件
+func (c *QQClient) UploadGroupFile(groupUin uint32, localFilePath string, targetDirectory string) error {
+	fileElement, err := message2.NewLocalFile(localFilePath)
+	if err != nil {
+		return err
+	}
+	if _, err = c.FileUploadGroup(groupUin, fileElement, targetDirectory); err != nil {
+		return err
+	}
+	return nil
+}
+
+// GetGroupFileSystemInfo 获取群文件系统信息
+func (c *QQClient) GetGroupFileSystemInfo(groupUin uint32) (*entity.GroupFileSystemInfo, error) {
+	pkt, err := oidb2.BuildGroupFileCountReq(groupUin)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.sendOidbPacketAndWait(pkt)
+	if err != nil {
+		return nil, err
+	}
+	fileCount, limitCount, err := oidb2.ParseGroupFileCountResp(resp)
+	if err != nil {
+		return nil, err
+	}
+	pkt, err = oidb2.BuildGroupFileSpaceReq(groupUin)
+	if err != nil {
+		return nil, err
+	}
+	resp, err = c.sendOidbPacketAndWait(pkt)
+	if err != nil {
+		return nil, err
+	}
+	totalSpace, usedSpace, err := oidb2.ParseGroupFileSpaceResp(resp)
+	if err != nil {
+		return nil, err
+	}
+	return &entity.GroupFileSystemInfo{
+		GroupUin:   groupUin,
+		FileCount:  fileCount,
+		LimitCount: limitCount,
+		TotalSpace: totalSpace,
+		UsedSpace:  usedSpace,
+	}, nil
+}
+
+// ListGroupFilesByFolder 获取群目录指定文件夹列表
+func (c *QQClient) ListGroupFilesByFolder(groupUin uint32, targetDirectory string) ([]*entity.GroupFile, []*entity.GroupFolder, error) {
+	var startIndex uint32 = 0
+	var fileCount uint32 = 20
+	var files []*entity.GroupFile
+	var folders []*entity.GroupFolder
+	for {
+		pkt, err := oidb2.BuildGroupFileListReq(groupUin, targetDirectory, startIndex, fileCount)
+		if err != nil {
+			return files, folders, err
+		}
+		p, err := c.sendOidbPacketAndWait(pkt)
+		if err != nil {
+			return files, folders, err
+		}
+		res, err := oidb2.ParseGroupFileListResp(p)
+		if err != nil {
+			return files, folders, err
+		}
+		if res.List.IsEnd {
+			break
+		}
+		for _, fe := range res.List.Items {
+			if fe.FileInfo != nil {
+				files = append(files, &entity.GroupFile{
+					GroupUin:      groupUin,
+					FileId:        fe.FileInfo.FileId,
+					FileName:      fe.FileInfo.FileName,
+					BusId:         fe.FileInfo.BusId,
+					FileSize:      fe.FileInfo.FileSize,
+					UploadTime:    fe.FileInfo.UploadedTime,
+					DeadTime:      fe.FileInfo.ExpireTime,
+					ModifyTime:    fe.FileInfo.ModifiedTime,
+					DownloadTimes: fe.FileInfo.DownloadedTimes,
+					Uploader:      fe.FileInfo.UploaderUin,
+					UploaderName:  fe.FileInfo.UploaderName,
+				})
+			}
+			if fe.FolderInfo != nil {
+				folders = append(folders, &entity.GroupFolder{
+					GroupUin:       groupUin,
+					FolderId:       fe.FolderInfo.FolderId,
+					FolderName:     fe.FolderInfo.FolderName,
+					CreateTime:     fe.FolderInfo.CreateTime,
+					Creator:        fe.FolderInfo.CreatorUin,
+					CreatorName:    fe.FolderInfo.CreatorName,
+					TotalFileCount: fe.FolderInfo.TotalFileCount,
+				})
+			}
+		}
+		startIndex += fileCount
+	}
+	return files, folders, nil
+}
+
+// ListGroupRootFiles 获取群根目录文件列表
+func (c *QQClient) ListGroupRootFiles(groupUin uint32) ([]*entity.GroupFile, []*entity.GroupFolder, error) {
+	return c.ListGroupFilesByFolder(groupUin, "/")
+}
+
+// RenameGroupFile 重命名群文件
+func (c *QQClient) RenameGroupFile(groupUin uint32, fileID string, parentFolder string, newFileName string) error {
+	pkt, err := oidb2.BuildGroupFileRenameReq(groupUin, fileID, parentFolder, newFileName)
+	if err != nil {
+		return err
+	}
+	resp, err := c.sendOidbPacketAndWait(pkt)
+	if err != nil {
+		return err
+	}
+	return oidb2.ParseGroupFileRenameResp(resp)
+}
+
+// MoveGroupFile 移动群文件
+func (c *QQClient) MoveGroupFile(groupUin uint32, fileID string, parentFolder string, targetFolderID string) error {
+	pkt, err := oidb2.BuildGroupFileMoveReq(groupUin, fileID, parentFolder, targetFolderID)
+	if err != nil {
+		return err
+	}
+	resp, err := c.sendOidbPacketAndWait(pkt)
+	if err != nil {
+		return err
+	}
+	return oidb2.ParseGroupFileMoveResp(resp)
+}
+
+// DeleteGroupFile 删除群文件
+func (c *QQClient) DeleteGroupFile(groupUin uint32, fileID string) error {
+	pkt, err := oidb2.BuildGroupFileDeleteReq(groupUin, fileID)
+	if err != nil {
+		return err
+	}
+	resp, err := c.sendOidbPacketAndWait(pkt)
+	if err != nil {
+		return err
+	}
+	return oidb2.ParseGroupFileDeleteResp(resp)
+}
+
+// CreateGroupFolder 创建群文件夹
+func (c *QQClient) CreateGroupFolder(groupUin uint32, targetDirectory string, folderName string) error {
+	pkt, err := oidb2.BuildGroupFolderCreateReq(groupUin, targetDirectory, folderName)
+	if err != nil {
+		return err
+	}
+	resp, err := c.sendOidbPacketAndWait(pkt)
+	if err != nil {
+		return err
+	}
+	return oidb2.ParseGroupFolderCreateResp(resp)
+}
+
+// RenameGroupFolder 重命名群文件夹
+func (c *QQClient) RenameGroupFolder(groupUin uint32, folderID string, newFolderName string) error {
+	pkt, err := oidb2.BuildGroupFolderRenameReq(groupUin, folderID, newFolderName)
+	if err != nil {
+		return err
+	}
+	resp, err := c.sendOidbPacketAndWait(pkt)
+	if err != nil {
+		return err
+	}
+	return oidb2.ParseGroupFolderRenameResp(resp)
+}
+
+// DeleteGroupFolder 删除群文件夹
+func (c *QQClient) DeleteGroupFolder(groupUin uint32, folderID string) error {
+	pkt, err := oidb2.BuildGroupFolderDeleteReq(groupUin, folderID)
+	if err != nil {
+		return err
+	}
+	resp, err := c.sendOidbPacketAndWait(pkt)
+	if err != nil {
+		return err
+	}
+	return oidb2.ParseGroupFolderDeleteResp(resp)
 }

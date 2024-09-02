@@ -18,12 +18,12 @@ func ParseFetchGroupSystemMessagesReq(data []byte, groupUin ...uint32) ([]*entit
 	if err != nil {
 		return nil, err
 	}
-	requests := make([]*entity.GroupJoinRequest, len(resp.Requests))
-	for i, r := range resp.Requests {
+	requests := make([]*entity.GroupJoinRequest, 0)
+	for _, r := range resp.Requests {
 		if len(groupUin) > 0 && groupUin[0] != r.Group.GroupUin {
 			continue
 		}
-		requests[i] = &entity.GroupJoinRequest{
+		req := &entity.GroupJoinRequest{
 			GroupUin:  r.Group.GroupUin,
 			TargetUid: r.Target.Uid,
 			Sequence:  r.Sequence,
@@ -32,11 +32,12 @@ func ParseFetchGroupSystemMessagesReq(data []byte, groupUin ...uint32) ([]*entit
 			Comment:   r.Comment,
 		}
 		if r.Invitor != nil {
-			requests[i].InvitorUid = r.Invitor.Uid
+			req.InvitorUid = r.Invitor.Uid
 		}
 		if r.Operator != nil {
-			requests[i].OperatorUid = r.Operator.Uid
+			req.OperatorUid = r.Operator.Uid
 		}
+		requests = append(requests, req)
 	}
 	return requests, nil
 }
