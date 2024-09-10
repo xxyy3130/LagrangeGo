@@ -12,9 +12,9 @@ type ContentHead struct {
 	Type      uint32               `protobuf:"varint,1,opt"`
 	SubType   proto.Option[uint32] `protobuf:"varint,2,opt"`
 	DivSeq    proto.Option[uint32] `protobuf:"varint,3,opt"`
-	MsgId     proto.Option[uint64] `protobuf:"varint,4,opt"`
+	MsgId     proto.Option[uint32] `protobuf:"varint,4,opt"`
 	Sequence  proto.Option[uint32] `protobuf:"varint,5,opt"`
-	TimeStamp proto.Option[uint64] `protobuf:"varint,6,opt"`
+	TimeStamp proto.Option[uint32] `protobuf:"varint,6,opt"`
 	Field7    proto.Option[uint64] `protobuf:"varint,7,opt"`
 	Field8    proto.Option[uint32] `protobuf:"varint,8,opt"`
 	Field9    proto.Option[uint32] `protobuf:"varint,9,opt"`
@@ -50,12 +50,12 @@ type GroupRecallMsgField4 struct {
 }
 
 type Message struct {
-	RoutingHead *RoutingHead         `protobuf:"bytes,1,opt"`
-	ContentHead *ContentHead         `protobuf:"bytes,2,opt"`
-	Body        *MessageBody         `protobuf:"bytes,3,opt"`
-	Seq         proto.Option[uint32] `protobuf:"varint,4,opt"`
-	Rand        proto.Option[uint32] `protobuf:"varint,5,opt"`
-	SyncCookie  []byte               `protobuf:"bytes,6,opt"`
+	RoutingHead    *RoutingHead         `protobuf:"bytes,1,opt"`
+	ContentHead    *ContentHead         `protobuf:"bytes,2,opt"`
+	Body           *MessageBody         `protobuf:"bytes,3,opt"`
+	ClientSequence proto.Option[uint32] `protobuf:"varint,4,opt"`
+	Random         proto.Option[uint32] `protobuf:"varint,5,opt"`
+	SyncCookie     []byte               `protobuf:"bytes,6,opt"`
 	// optional AppShareInfo AppShare = 7;
 	Via         proto.Option[uint32] `protobuf:"varint,8,opt"`
 	DataStatist proto.Option[uint32] `protobuf:"varint,9,opt"`
