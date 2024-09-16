@@ -41,7 +41,7 @@ type (
 	PrivateMessage struct {
 		Id         uint32
 		InternalId uint32
-		CleintSeq  uint32
+		ClientSeq  uint32
 		Self       uint32
 		Target     uint32
 		Time       uint32
@@ -98,57 +98,57 @@ func (s *Sender) IsAnonymous() bool {
 	return s.Uin == 80000000
 }
 
-func ParsePrivateMessage(msg *message.PushMsg) *PrivateMessage {
+func ParsePrivateMessage(msg *message.PushMsgBody) *PrivateMessage {
 	prvMsg := &PrivateMessage{
-		Id:         (msg.Message.ContentHead.Sequence.Unwrap()),
-		InternalId: (msg.Message.ContentHead.MsgId.Unwrap()),
-		Self:       (msg.Message.ResponseHead.ToUin),
-		Target:     (msg.Message.ResponseHead.FromUin),
+		Id:         msg.ContentHead.Sequence.Unwrap(),
+		InternalId: msg.ContentHead.MsgId.Unwrap(),
+		Self:       msg.ResponseHead.ToUin,
+		Target:     msg.ResponseHead.FromUin,
 		Sender: &Sender{
-			Uin:      msg.Message.ResponseHead.FromUin,
-			Uid:      msg.Message.ResponseHead.FromUid.Unwrap(),
+			Uin:      msg.ResponseHead.FromUin,
+			Uid:      msg.ResponseHead.FromUid.Unwrap(),
 			IsFriend: true,
 		},
-		Time:     msg.Message.ContentHead.TimeStamp.Unwrap(),
-		Elements: parseMessageElements(msg.Message.Body.RichText.Elems),
+		Time:     msg.ContentHead.TimeStamp.Unwrap(),
+		Elements: ParseMessageElements(msg.Body.RichText.Elems),
 	}
-	if msg.Message != nil && msg.Message.Body != nil {
-		prvMsg.Elements = append(prvMsg.Elements, ParseMessageBody(msg.Message.Body, false)...)
+	if msg.Body != nil {
+		prvMsg.Elements = append(prvMsg.Elements, ParseMessageBody(msg.Body, false)...)
 	}
 
 	return prvMsg
 }
 
-func ParseGroupMessage(msg *message.PushMsg) *GroupMessage {
+func ParseGroupMessage(msg *message.PushMsgBody) *GroupMessage {
 	grpMsg := &GroupMessage{
-		Id:         msg.Message.ContentHead.Sequence.Unwrap(),
-		InternalId: msg.Message.ContentHead.MsgId.Unwrap(),
-		GroupUin:   msg.Message.ResponseHead.Grp.GroupUin,
-		GroupName:  msg.Message.ResponseHead.Grp.GroupName,
+		Id:         msg.ContentHead.Sequence.Unwrap(),
+		InternalId: msg.ContentHead.MsgId.Unwrap(),
+		GroupUin:   msg.ResponseHead.Grp.GroupUin,
+		GroupName:  msg.ResponseHead.Grp.GroupName,
 		Sender: &Sender{
-			Uin:      msg.Message.ResponseHead.FromUin,
-			Uid:      msg.Message.ResponseHead.FromUid.Unwrap(),
-			Nickname: msg.Message.ResponseHead.Grp.MemberName,
-			CardName: msg.Message.ResponseHead.Grp.MemberName,
+			Uin:      msg.ResponseHead.FromUin,
+			Uid:      msg.ResponseHead.FromUid.Unwrap(),
+			Nickname: msg.ResponseHead.Grp.MemberName,
+			CardName: msg.ResponseHead.Grp.MemberName,
 			IsFriend: false,
 		},
-		Time:           msg.Message.ContentHead.TimeStamp.Unwrap(),
-		Elements:       parseMessageElements(msg.Message.Body.RichText.Elems),
-		OriginalObject: msg.Message,
+		Time:           msg.ContentHead.TimeStamp.Unwrap(),
+		Elements:       ParseMessageElements(msg.Body.RichText.Elems),
+		OriginalObject: msg,
 	}
-	if msg.Message != nil && msg.Message.Body != nil {
-		grpMsg.Elements = append(grpMsg.Elements, ParseMessageBody(msg.Message.Body, true)...)
+	if msg.Body != nil {
+		grpMsg.Elements = append(grpMsg.Elements, ParseMessageBody(msg.Body, true)...)
 	}
 	return grpMsg
 }
 
-func ParseTempMessage(msg *message.PushMsg) *TempMessage {
+func ParseTempMessage(msg *message.PushMsgBody) *TempMessage {
 	return &TempMessage{
-		Elements: parseMessageElements(msg.Message.Body.RichText.Elems),
+		Elements: ParseMessageElements(msg.Body.RichText.Elems),
 	}
 }
 
-func parseMessageElements(msg []*message.Elem) []IMessageElement {
+func ParseMessageElements(msg []*message.Elem) []IMessageElement {
 	var res []IMessageElement
 
 	for _, elem := range msg {
@@ -158,7 +158,7 @@ func parseMessageElements(msg []*message.Elem) []IMessageElement {
 				Time:      uint32(elem.SrcMsg.Time.Unwrap()),
 				SenderUin: uint32(elem.SrcMsg.SenderUin),
 				GroupUin:  uint32(elem.SrcMsg.ToUin.Unwrap()),
-				Elements:  parseMessageElements(elem.SrcMsg.Elems),
+				Elements:  ParseMessageElements(elem.SrcMsg.Elems),
 			}
 			res = append(res, r)
 		}
@@ -188,7 +188,7 @@ func parseMessageElements(msg []*message.Elem) []IMessageElement {
 				if faceId.IsSome() {
 					res = append(res, &FaceElement{FaceID: uint16(faceId.Unwrap())})
 				}
-			} else if elem.CommonElem.ServiceType == 37 && elem.CommonElem.PbElem != nil {
+			} else if elem.CommonElem != nil && elem.CommonElem.ServiceType == 37 && elem.CommonElem.PbElem != nil {
 				qFace := message.QFaceExtra{}
 				err := proto.Unmarshal(elem.CommonElem.PbElem, &qFace)
 				if err == nil {
@@ -197,7 +197,7 @@ func parseMessageElements(msg []*message.Elem) []IMessageElement {
 						res = append(res, &FaceElement{FaceID: uint16(faceId.Unwrap()), isLargeFace: true})
 					}
 				}
-			} else if elem.CommonElem.ServiceType == 33 && elem.CommonElem.PbElem != nil {
+			} else if elem.CommonElem != nil && elem.CommonElem.ServiceType == 33 && elem.CommonElem.PbElem != nil {
 				qFace := message.QSmallFaceExtra{}
 				err := proto.Unmarshal(elem.CommonElem.PbElem, &qFace)
 				if err == nil {
@@ -319,7 +319,7 @@ func parseMessageElements(msg []*message.Elem) []IMessageElement {
 			xmlData := binary.ZlibUncompress(elem.RichMsg.Template1[1:])
 			multimsg := MultiMessage{}
 			_ = xml.Unmarshal(xmlData, &multimsg)
-			res = append(res, NewFoward(multimsg.ResId))
+			res = append(res, NewForward(multimsg.ResId))
 		}
 	}
 
@@ -400,33 +400,91 @@ func (msg *GroupMessage) ToString() string {
 	return ToReadableString(msg.Elements)
 }
 
+func (msg *GroupMessage) GetElements() []IMessageElement {
+	return msg.Elements
+}
+
+func (msg *GroupMessage) Chat() int64 {
+	return int64(msg.Id)
+}
+
+func (msg *GroupMessage) Texts() []string {
+	var texts []string
+	for _, elem := range msg.Elements {
+		texts = append(texts, ToReadableStringEle(elem))
+	}
+	return texts
+}
+
 func (msg *PrivateMessage) ToString() string {
 	return ToReadableString(msg.Elements)
+}
+
+func (msg *PrivateMessage) GetElements() []IMessageElement {
+	return msg.Elements
+}
+
+func (msg *PrivateMessage) Chat() int64 {
+	return int64(msg.Id)
+}
+
+func (msg *PrivateMessage) Texts() []string {
+	var texts []string
+	for _, elem := range msg.Elements {
+		texts = append(texts, ToReadableStringEle(elem))
+	}
+	return texts
+}
+
+func (msg *TempMessage) ToString() string {
+	return ToReadableString(msg.Elements)
+}
+
+func (msg *TempMessage) GetElements() []IMessageElement {
+	return msg.Elements
+}
+
+func (msg *TempMessage) Chat() int64 {
+	return int64(msg.Id)
+}
+
+func (msg *TempMessage) Texts() []string {
+	var texts []string
+	for _, elem := range msg.Elements {
+		texts = append(texts, ToReadableStringEle(elem))
+	}
+	return texts
 }
 
 func ToReadableString(m []IMessageElement) string {
 	sb := new(strings.Builder)
 	for _, elem := range m {
-		switch e := elem.(type) {
-		case *TextElement:
-			sb.WriteString(e.Content)
-		case *ImageElement:
-			sb.WriteString("[图片]")
-		case *AtElement:
-			sb.WriteString(e.Display)
-		case *ReplyElement:
-			sb.WriteString("[回复]")
-		case *FaceElement:
-			sb.WriteString("[表情]")
-		case *VoiceElement:
-			sb.WriteString("[语音]")
-		case *LightAppElement:
-			sb.WriteString("[卡片消息]")
-		case *ForwardMessage:
-			sb.WriteString("[转发消息]")
-		}
+		sb.WriteString(ToReadableStringEle(elem))
 	}
 	return sb.String()
+}
+
+func ToReadableStringEle(elem IMessageElement) string {
+	switch e := elem.(type) {
+	case *TextElement:
+		return e.Content
+	case *ImageElement:
+		return "[图片]"
+	case *AtElement:
+		return e.Display
+	case *ReplyElement:
+		return "[回复]" // [Optional] + ToReadableString(e.Elements), 这里不破坏原义不添加
+	case *FaceElement:
+		return "[表情]"
+	case *VoiceElement:
+		return "[语音]"
+	case *LightAppElement:
+		return "[卡片消息]"
+	case *ForwardMessage:
+		return "[转发消息]"
+	default:
+		return "[暂不支持该消息类型]"
+	}
 }
 
 func NewSendingMessage() *SendingMessage {
