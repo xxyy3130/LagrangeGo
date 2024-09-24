@@ -1,7 +1,12 @@
 package client
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
 
 	"github.com/LagrangeDev/LagrangeGo/client/entity"
 	messagePkt "github.com/LagrangeDev/LagrangeGo/client/packets/message"
@@ -237,6 +242,18 @@ func (c *QQClient) GroupSetSpecialTitle(groupUin, uin uint32, title string) erro
 	return oidb2.ParseGroupSetSpecialTitleResp(resp)
 }
 
+func (c *QQClient) GroupSetReaction(groupUin, sequence uint32, code string, isAdd bool) error {
+	pkt, err := oidb2.BuildGroupSetReactionReq(groupUin, sequence, code, isAdd)
+	if err != nil {
+		return err
+	}
+	resp, err := c.sendOidbPacketAndWait(pkt)
+	if err != nil {
+		return err
+	}
+	return oidb2.ParseGroupSetReactionResp(resp)
+}
+
 // GroupPoke 戳一戳群友
 func (c *QQClient) GroupPoke(groupUin, uin uint32) error {
 	pkt, err := oidb2.BuildGroupPokeReq(groupUin, uin)
@@ -405,6 +422,59 @@ func (c *QQClient) GetPrivateFileUrl(fileUUID string, fileHash string) (string, 
 	return oidb2.ParsePrivateFileDownloadResp(resp)
 }
 
+func (c *QQClient) queryImage(url string, method string) (*message2.ImageElement, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, method, url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func(Body io.ReadCloser) {
+		if err := Body.Close(); err != nil {
+			return
+		}
+	}(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("file not found")
+	}
+	return &message2.ImageElement{
+		Url:  url,
+		Size: uint32(resp.ContentLength),
+	}, nil
+}
+
+func (c *QQClient) QueryGroupImage(md5 []byte, fileUUID string) (*message2.ImageElement, error) {
+	var url string
+	if fileUUID != "" {
+		rkeyInfo := c.GetCachedRkeyInfo(entity.GroupRKey)
+		url = fmt.Sprintf("https://multimedia.nt.qq.com.cn/download?appid=1407&fileid=%s&rkey=%s", fileUUID, rkeyInfo.RKey)
+		return c.queryImage(url, http.MethodGet)
+	} else if len(md5) == 16 {
+		url = fmt.Sprintf("http://gchat.qpic.cn/gchatpic_new/0/0-0-%X/0", md5)
+		return c.queryImage(url, http.MethodHead)
+	} else {
+		return nil, errors.New("invalid parameters")
+	}
+}
+
+func (c *QQClient) QueryFriendImage(md5 []byte, fileUUID string) (*message2.ImageElement, error) {
+	var url string
+	if fileUUID != "" {
+		rkeyInfo := c.GetCachedRkeyInfo(entity.FriendRKey)
+		url = fmt.Sprintf("https://multimedia.nt.qq.com.cn/download?appid=1406&fileid=%s&rkey=%s", fileUUID, rkeyInfo.RKey)
+		return c.queryImage(url, http.MethodGet)
+	} else if len(md5) == 16 {
+		url = fmt.Sprintf("http://gchat.qpic.cn/gchatpic_new/0/0-0-%X/0", md5)
+		return c.queryImage(url, http.MethodHead)
+	} else {
+		return nil, errors.New("invalid parameters")
+	}
+}
+
 // FetchUserInfo 获取用户信息
 func (c *QQClient) FetchUserInfo(uid string) (*entity.Friend, error) {
 	pkt, err := oidb2.BuildFetchUserInfoReq(uid)
@@ -432,8 +502,8 @@ func (c *QQClient) FetchUserInfoUin(uin uint32) (*entity.Friend, error) {
 }
 
 // GetGroupSystemMessages 获取加群请求信息
-func (c *QQClient) GetGroupSystemMessages(groupUin ...uint32) ([]*entity.GroupJoinRequest, error) {
-	pkt, err := oidb2.BuildFetchGroupSystemMessagesReq(20)
+func (c *QQClient) GetGroupSystemMessages(isFiltered bool, count uint32, groupUin ...uint32) ([]*entity.GroupJoinRequest, error) {
+	pkt, err := oidb2.BuildFetchGroupSystemMessagesReq(isFiltered, count)
 	if err != nil {
 		return nil, err
 	}
@@ -441,12 +511,12 @@ func (c *QQClient) GetGroupSystemMessages(groupUin ...uint32) ([]*entity.GroupJo
 	if err != nil {
 		return nil, err
 	}
-	return oidb2.ParseFetchGroupSystemMessagesReq(resp, groupUin...)
+	return oidb2.ParseFetchGroupSystemMessagesReq(isFiltered, resp, groupUin...)
 }
 
 // SetGroupRequest 处理加群请求
-func (c *QQClient) SetGroupRequest(accept bool, sequence uint64, typ uint32, groupUin uint32, message string) error {
-	pkt, err := oidb2.BuildSetGroupRequestReq(accept, sequence, typ, groupUin, message)
+func (c *QQClient) SetGroupRequest(isFiltered bool, accept bool, sequence uint64, typ uint32, groupUin uint32, message string) error {
+	pkt, err := oidb2.BuildSetGroupRequestReq(isFiltered, accept, sequence, typ, groupUin, message)
 	if err != nil {
 		return err
 	}
@@ -470,6 +540,19 @@ func (c *QQClient) SetFriendRequest(accept bool, targetUid string) error {
 	return oidb2.ParseSetFriendRequestResp(resp)
 }
 
+// FetchRkey 获取Rkey
+func (c *QQClient) FetchRkey() (entity.RKeyMap, error) {
+	pkt, err := oidb2.BuildFetchRKeyReq()
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.sendOidbPacketAndWait(pkt)
+	if err != nil {
+		return nil, err
+	}
+	return oidb2.ParseFetchRKeyResp(resp)
+}
+
 // FetchClientKey 获取ClientKey
 func (c *QQClient) FetchClientKey() (string, error) {
 	pkt, err := oidb2.BuildFetchClientKeyReq()
@@ -483,7 +566,7 @@ func (c *QQClient) FetchClientKey() (string, error) {
 	return oidb2.ParseFetchClientKeyResp(resp)
 }
 
-// FetchCookies 获取cooikes
+// FetchCookies 获取cookies
 func (c *QQClient) FetchCookies(domains []string) ([]string, error) {
 	pkt, err := oidb2.BuildFetchCookieReq(domains)
 	if err != nil {

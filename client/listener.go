@@ -126,9 +126,10 @@ func decodeOlPushServicePacket(c *QQClient, pkt *network.Packet) (any, error) {
 			ev.TargetUin = user.Uin
 			ev.TargetNick = user.Nickname
 		}
-		requests, err := c.GetGroupSystemMessages(ev.GroupUin)
-		if err == nil {
-			for _, request := range requests {
+		commonRequests, reqErr := c.GetGroupSystemMessages(false, 20, ev.GroupUin)
+		filteredRequests, freqErr := c.GetGroupSystemMessages(true, 20, ev.GroupUin)
+		if reqErr == nil && freqErr == nil {
+			for _, request := range append(commonRequests, filteredRequests...) {
 				if request.TargetUid == ev.TargetUid && !request.Checked() {
 					ev.RequestSeq = request.Sequence
 					ev.Answer = request.Comment
@@ -165,9 +166,10 @@ func decodeOlPushServicePacket(c *QQClient, pkt *network.Packet) (any, error) {
 			ev.InvitorUin = user.Uin
 			ev.InvitorNick = user.Nickname
 		}
-		requests, err := c.GetGroupSystemMessages(ev.GroupUin)
-		if err == nil {
-			for _, request := range requests {
+		commonRequests, reqErr := c.GetGroupSystemMessages(false, 20, ev.GroupUin)
+		filteredRequests, freqErr := c.GetGroupSystemMessages(true, 20, ev.GroupUin)
+		if reqErr == nil && freqErr == nil {
+			for _, request := range append(commonRequests, filteredRequests...) {
 				if request.TargetUid == c.GetUid(c.Uin) && !request.Checked() {
 					ev.RequestSeq = request.Sequence
 					break
@@ -262,7 +264,7 @@ func decodeOlPushServicePacket(c *QQClient, pkt *network.Packet) (any, error) {
 				return nil, err
 			}
 			if pb.GrayTipInfo.BusiType == 12 { // poke
-				c.GroupNotifyEvent.dispatch(c, eventConverter.PaeseGroupPokeEvent(&pb, groupUin))
+				c.GroupNotifyEvent.dispatch(c, eventConverter.ParseGroupPokeEvent(&pb, groupUin))
 			}
 			return nil, nil
 		case 17: // recall
@@ -278,7 +280,7 @@ func decodeOlPushServicePacket(c *QQClient, pkt *network.Packet) (any, error) {
 			_ = c.PreprocessOther(ev)
 			c.GroupRecallEvent.dispatch(c, ev)
 			return nil, nil
-		case 16: // groupname update & member special title update
+		case 16: // group name update & member special title update & group reaction
 			reader := binary.NewReader(pkg.Body.MsgContent)
 			groupUin := reader.ReadU32()
 			reader.SkipBytes(1)
@@ -287,19 +289,32 @@ func decodeOlPushServicePacket(c *QQClient, pkt *network.Packet) (any, error) {
 			if err != nil {
 				return nil, err
 			}
-			if pb.Field13 == 6 { // GroupMemberSpecialTitle
+			switch pb.Field13 {
+			case 6: // GroupMemberSpecialTitle
 				epb := message.GroupSpecialTitle{}
-				err = proto.Unmarshal(pb.EventParam, &epb)
+				err := proto.Unmarshal(pb.EventParam, &epb)
 				if err != nil {
 					return nil, err
 				}
 				c.MemberSpecialTitleUpdatedEvent.dispatch(c, eventConverter.ParseGroupMemberSpecialTitleUpdatedEvent(&epb, groupUin))
-			} else if pb.Field13 == 12 { // groupname update
+			case 12: // group name update
 				r := binary.NewReader(pb.EventParam)
 				r.SkipBytes(3)
 				ev := eventConverter.ParseGroupNameUpdatedEvent(&pb, string(r.ReadBytesWithLength("u8", false)))
 				_ = c.PreprocessOther(ev)
 				c.GroupNameUpdatedEvent.dispatch(c, ev)
+			case 35: // group reaction
+				r := binary.NewReader(pkg.Body.MsgContent)
+				r.ReadU32()
+				r.ReadBytes(1)
+				rpb := message.GroupReaction{}
+				err := proto.Unmarshal(r.ReadBytesWithLength("u16", false), &rpb)
+				if err != nil {
+					return nil, err
+				}
+				ev := eventConverter.ParseGroupReactionEvent(&rpb)
+				_ = c.PreprocessOther(ev)
+				c.GroupReactionEvent.dispatch(c, ev)
 			}
 		case 12: // mute
 			pb := message.GroupMute{}
